@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mood Generator v0.1.0</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="aurora" aria-hidden="true"></div>
+    <div class="app-shell">
+      <header class="header">
+        <p class="kicker">Mood Generator <span id="appVersion" class="app-version">v0.1.0</span></p>
+        <h1>Build a space you can feel.</h1>
+        <p class="lede">
+          Choose a setting image, ambient sound, and moving actions. Press
+          <strong>Shift Mood</strong> to glide into another preset instantly.
+        </p>
+      </header>
+
+      <main class="main-grid">
+        <section class="scene-panel" aria-label="Mood scene">
+          <div class="scene-shell">
+            <div id="sceneLayerA" class="scene-layer is-visible"></div>
+            <div id="sceneLayerB" class="scene-layer"></div>
+            <div id="effectsLayer" class="effects-layer" aria-hidden="true"></div>
+
+            <div class="scene-overlay">
+              <p class="overlay-label">Current Mood</p>
+              <h2 id="moodName">Loading mood...</h2>
+              <p id="moodDescription"></p>
+            </div>
+          </div>
+        </section>
+
+        <section class="control-panel" aria-label="Mood controls">
+          <div class="control-block">
+            <label for="settingSelect">Setting (Image)</label>
+            <select id="settingSelect"></select>
+          </div>
+
+          <div class="control-block">
+            <label for="soundSelect">Ambient Music (Sound)</label>
+            <select id="soundSelect"></select>
+          </div>
+
+          <fieldset class="control-block">
+            <legend>Items Passing By (Actions)</legend>
+            <div id="effectsOptions" class="effects-options"></div>
+          </fieldset>
+
+          <div class="button-row">
+            <button id="toggleAudioBtn" class="btn ghost" type="button">
+              Enable Sound
+            </button>
+            <button id="shiftMoodBtn" class="btn primary" type="button">
+              Shift Mood
+            </button>
+          </div>
+          <p id="audioStatus" class="audio-status" aria-live="polite">
+            Sound is off. Click Enable Sound.
+          </p>
+
+          <div class="preset-block">
+            <h3>Preset Moods</h3>
+            <div id="moodList" class="mood-list" role="list"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="script.js"></script>
+  </body>
+</html>
