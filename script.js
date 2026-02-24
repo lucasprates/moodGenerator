@@ -1,4 +1,4 @@
-const APP_VERSION = "0.1.0";
+const APP_VERSION = "0.2.0";
 
 const SCENES = [
   {
@@ -152,6 +152,49 @@ const EFFECTS = [
   { id: "fireflies", label: "Fireflies" },
 ];
 
+const LAYERS = [
+  {
+    id: "bass-drone",
+    label: "Bass Drone",
+    role: "bass",
+    wave: "sine",
+    stepRatio: 1.2,
+    durationRatio: 1.55,
+    level: 0.04,
+    filter: { type: "lowpass", frequency: 380, q: 0.95 },
+  },
+  {
+    id: "warm-pad",
+    label: "Warm Pad",
+    role: "pad",
+    wave: "triangle",
+    stepRatio: 1,
+    durationRatio: 1.35,
+    level: 0.03,
+    filter: { type: "lowpass", frequency: 1850, q: 0.8 },
+  },
+  {
+    id: "night-arp",
+    label: "Night Arp",
+    role: "arp",
+    wave: "sawtooth",
+    stepRatio: 0.33,
+    durationRatio: 0.45,
+    level: 0.018,
+    filter: { type: "bandpass", frequency: 1600, q: 1.2 },
+  },
+  {
+    id: "glass-sparkle",
+    label: "Glass Sparkle",
+    role: "sparkle",
+    wave: "sine",
+    stepRatio: 0.46,
+    durationRatio: 0.28,
+    level: 0.013,
+    filter: { type: "highpass", frequency: 1650, q: 0.75 },
+  },
+];
+
 const MOODS = [
   {
     name: "Cozy Cabin Rain",
@@ -159,6 +202,7 @@ const MOODS = [
     sceneId: "cabin-window",
     soundId: "vinyl-rain",
     effects: ["rain"],
+    layers: ["warm-pad", "bass-drone"],
   },
   {
     name: "Misty Forest Morning",
@@ -166,6 +210,7 @@ const MOODS = [
     sceneId: "forest-dawn",
     soundId: "woodland-hush",
     effects: ["wind"],
+    layers: ["warm-pad", "glass-sparkle"],
   },
   {
     name: "Alpine White Noise",
@@ -173,6 +218,7 @@ const MOODS = [
     sceneId: "alpine-night",
     soundId: "frost-chimes",
     effects: ["snow", "wind"],
+    layers: ["glass-sparkle"],
   },
   {
     name: "Neon Rain Drive",
@@ -180,6 +226,7 @@ const MOODS = [
     sceneId: "neon-city",
     soundId: "neon-pulse",
     effects: ["rain", "wind"],
+    layers: ["night-arp", "bass-drone"],
   },
   {
     name: "Moonlit Shore",
@@ -187,6 +234,7 @@ const MOODS = [
     sceneId: "ocean-twilight",
     soundId: "tide-drift",
     effects: ["wind"],
+    layers: ["bass-drone", "warm-pad"],
   },
   {
     name: "Desert Night Heat",
@@ -194,6 +242,7 @@ const MOODS = [
     sceneId: "desert-dusk",
     soundId: "ember-room",
     effects: ["wind", "fireflies"],
+    layers: ["warm-pad", "night-arp"],
   },
   {
     name: "Starlit Meadow",
@@ -201,15 +250,18 @@ const MOODS = [
     sceneId: "meadow-stars",
     soundId: "woodland-hush",
     effects: ["fireflies"],
+    layers: ["warm-pad", "glass-sparkle"],
   },
 ];
 
 const sceneById = new Map(SCENES.map((scene) => [scene.id, scene]));
 const soundById = new Map(SOUNDS.map((sound) => [sound.id, sound]));
+const layerById = new Map(LAYERS.map((layer) => [layer.id, layer]));
 
 const dom = {
   settingSelect: document.getElementById("settingSelect"),
   soundSelect: document.getElementById("soundSelect"),
+  layerOptions: document.getElementById("layerOptions"),
   effectsOptions: document.getElementById("effectsOptions"),
   moodList: document.getElementById("moodList"),
   moodName: document.getElementById("moodName"),
@@ -226,6 +278,7 @@ const dom = {
 const state = {
   sceneId: MOODS[0].sceneId,
   soundId: MOODS[0].soundId,
+  layers: [...(MOODS[0].layers ?? [])],
   effects: [...MOODS[0].effects],
   moodIndex: 0,
   activeLayer: 0,
@@ -345,13 +398,17 @@ class EffectsEngine {
 }
 
 class AmbientAudioEngine {
-  constructor(soundLibrary) {
+  constructor(soundLibrary, layerLibrary) {
     this.soundMap = new Map(soundLibrary.map((sound) => [sound.id, sound]));
+    this.layerMap = new Map(layerLibrary.map((layer) => [layer.id, layer]));
     this.hasSupport = Boolean(window.AudioContext || window.webkitAudioContext);
     this.context = null;
     this.masterGain = null;
     this.compressor = null;
     this.activeTrack = null;
+    this.activeLayerTracks = new Map();
+    this.activeSoundId = "";
+    this.selectedLayerIds = [];
     this.isEnabled = false;
     this.lastError = "";
   }
@@ -401,9 +458,26 @@ class AmbientAudioEngine {
       this.fadeOutAndStop(this.activeTrack, 0.8);
       this.activeTrack = null;
     }
+
+    this.stopAllLayerTracks(0.7);
+    this.activeSoundId = "";
   }
 
-  async play(soundId) {
+  setLayers(layerIds) {
+    this.selectedLayerIds = this.normalizeLayerIds(layerIds);
+    if (!this.isEnabled || !this.activeSoundId || !this.context) {
+      return;
+    }
+
+    const sound = this.soundMap.get(this.activeSoundId);
+    if (!sound) {
+      return;
+    }
+
+    this.syncLayerTracks(sound);
+  }
+
+  async play(soundId, layerIds = this.selectedLayerIds) {
     if (!this.isEnabled) {
       return false;
     }
@@ -418,21 +492,25 @@ class AmbientAudioEngine {
       return false;
     }
 
+    this.selectedLayerIds = this.normalizeLayerIds(layerIds);
+
     if (this.activeTrack?.id === soundId) {
+      this.activeSoundId = soundId;
+      this.syncLayerTracks(sound);
       return true;
     }
 
     const nextTrack = this.createTrack(sound);
-    const now = this.context.currentTime;
-    nextTrack.gain.gain.cancelScheduledValues(now);
-    nextTrack.gain.gain.setValueAtTime(0, now);
-    nextTrack.gain.gain.linearRampToValueAtTime(1, now + 0.9);
+    this.fadeInTrack(nextTrack, 0.9);
 
     if (this.activeTrack) {
       this.fadeOutAndStop(this.activeTrack, 1.1);
     }
 
+    this.stopAllLayerTracks(1.0);
     this.activeTrack = nextTrack;
+    this.activeSoundId = soundId;
+    this.syncLayerTracks(sound);
     return true;
   }
 
@@ -474,16 +552,150 @@ class AmbientAudioEngine {
     };
   }
 
-  playChord({ frequencies, wave, duration, level, when, target }) {
+  createLayerTrack(layer, sound) {
+    const gain = this.context.createGain();
+    gain.gain.value = 0;
+    gain.connect(this.masterGain);
+
+    let target = gain;
+    if (layer.filter) {
+      const filter = this.context.createBiquadFilter();
+      filter.type = layer.filter.type;
+      filter.frequency.value = layer.filter.frequency;
+      filter.Q.value = layer.filter.q ?? 1;
+      filter.connect(gain);
+      target = filter;
+    }
+
+    let stepIndex = Math.floor(Math.random() * 4);
+    const stepMs = Math.max(280, sound.stepMs * layer.stepRatio);
+    const playStep = () => {
+      const chord = sound.chords[Math.floor(Math.random() * sound.chords.length)];
+      const now = this.context.currentTime;
+      const layerStep = this.getLayerStep(layer, chord, stepIndex, sound.noteSeconds);
+
+      if (layerStep.frequencies.length > 0) {
+        this.playChord({
+          frequencies: layerStep.frequencies,
+          wave: layer.wave,
+          duration: layerStep.duration,
+          level: layer.level,
+          when: now,
+          target,
+          detuneRange: layerStep.detuneRange,
+          minimumLevel: 0.012,
+        });
+      }
+
+      stepIndex += 1;
+    };
+
+    playStep();
+    const timer = window.setInterval(playStep, stepMs);
+
+    return {
+      id: layer.id,
+      gain,
+      timer,
+    };
+  }
+
+  getLayerStep(layer, chord, stepIndex, baseDuration) {
+    const safeDuration = Math.max(0.18, baseDuration * layer.durationRatio);
+    const root = chord[0];
+    const middle = chord[Math.min(1, chord.length - 1)];
+    const top = chord[chord.length - 1];
+
+    if (layer.role === "bass") {
+      return {
+        frequencies: [shiftFrequency(root, -1)],
+        duration: safeDuration,
+        detuneRange: 3,
+      };
+    }
+
+    if (layer.role === "pad") {
+      return {
+        frequencies: [root, middle, top, shiftFrequency(root, 1)],
+        duration: safeDuration,
+        detuneRange: 5,
+      };
+    }
+
+    if (layer.role === "arp") {
+      const note = chord[stepIndex % chord.length];
+      const octaveShift = stepIndex % 4 === 0 ? 2 : 1;
+      return {
+        frequencies: [shiftFrequency(note, octaveShift)],
+        duration: safeDuration,
+        detuneRange: 7,
+      };
+    }
+
+    if (layer.role === "sparkle") {
+      const note = chord[(stepIndex + 1) % chord.length];
+      return {
+        frequencies: [shiftFrequency(note, 2), shiftFrequency(top, 1)],
+        duration: safeDuration,
+        detuneRange: 10,
+      };
+    }
+
+    return {
+      frequencies: chord,
+      duration: safeDuration,
+      detuneRange: 7,
+    };
+  }
+
+  syncLayerTracks(sound) {
+    const desired = new Set(this.selectedLayerIds);
+
+    for (const [layerId, track] of this.activeLayerTracks.entries()) {
+      if (!desired.has(layerId)) {
+        this.fadeOutAndStop(track, 0.75);
+        this.activeLayerTracks.delete(layerId);
+      }
+    }
+
+    for (const layerId of desired) {
+      if (this.activeLayerTracks.has(layerId)) {
+        continue;
+      }
+
+      const layer = this.layerMap.get(layerId);
+      if (!layer) {
+        continue;
+      }
+
+      const track = this.createLayerTrack(layer, sound);
+      this.fadeInTrack(track, 0.7);
+      this.activeLayerTracks.set(layerId, track);
+    }
+  }
+
+  stopAllLayerTracks(fadeSeconds = 0.7) {
+    for (const track of this.activeLayerTracks.values()) {
+      this.fadeOutAndStop(track, fadeSeconds);
+    }
+
+    this.activeLayerTracks.clear();
+  }
+
+  normalizeLayerIds(layerIds) {
+    return [...new Set(layerIds)].filter((layerId) => this.layerMap.has(layerId));
+  }
+
+  playChord({ frequencies, wave, duration, level, when, target, detuneRange = 7, minimumLevel = 0.08 }) {
     frequencies.forEach((frequency, index) => {
       const osc = this.context.createOscillator();
       const amp = this.context.createGain();
 
       osc.type = wave;
       osc.frequency.setValueAtTime(frequency, when);
-      osc.detune.setValueAtTime(randomBetween(-7, 7), when);
+      osc.detune.setValueAtTime(randomBetween(-detuneRange, detuneRange), when);
 
-      const noteLevel = Math.min(Math.max(level * 2.2, 0.08), 0.32) / (1 + index * 0.35);
+      const noteLevel = Math.min(Math.max(level * 2.2, minimumLevel), 0.32) / (1 + index * 0.35);
       amp.gain.setValueAtTime(0.0001, when);
       amp.gain.exponentialRampToValueAtTime(noteLevel, when + 0.35);
       amp.gain.exponentialRampToValueAtTime(0.0001, when + duration);
@@ -529,6 +741,10 @@ class AmbientAudioEngine {
   }
 
   fadeOutAndStop(track, fadeSeconds) {
+    if (!this.context) {
+      return;
+    }
+
     const now = this.context.currentTime;
     track.gain.gain.cancelScheduledValues(now);
     track.gain.gain.setValueAtTime(Math.max(track.gain.gain.value, 0.0001), now);
@@ -538,10 +754,17 @@ class AmbientAudioEngine {
       track.gain.disconnect();
     }, (fadeSeconds + 0.15) * 1000);
   }
+
+  fadeInTrack(track, fadeSeconds) {
+    const now = this.context.currentTime;
+    track.gain.gain.cancelScheduledValues(now);
+    track.gain.gain.setValueAtTime(0, now);
+    track.gain.gain.linearRampToValueAtTime(1, now + fadeSeconds);
+  }
 }
 
 const effectsEngine = new EffectsEngine(dom.effectsLayer);
-const audioEngine = new AmbientAudioEngine(SOUNDS);
+const audioEngine = new AmbientAudioEngine(SOUNDS, LAYERS);
 
 setupControls();
 setupEvents();
@@ -560,6 +783,22 @@ function setupControls() {
     option.value = sound.id;
     option.textContent = sound.name;
     dom.soundSelect.appendChild(option);
+  });
+
+  LAYERS.forEach((layer) => {
+    const label = document.createElement("label");
+    label.className = "effect-pill";
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.name = "layer";
+    checkbox.value = layer.id;
+
+    const text = document.createElement("span");
+    text.textContent = layer.label;
+
+    label.append(checkbox, text);
+    dom.layerOptions.appendChild(label);
   });
 
   EFFECTS.forEach((effect) => {
@@ -597,15 +836,21 @@ function setupEvents() {
 
   dom.soundSelect.addEventListener("change", async () => {
     state.soundId = dom.soundSelect.value;
-    const started = await audioEngine.play(state.soundId);
+    const started = await audioEngine.play(state.soundId, state.layers);
     if (started) {
-      setAudioStatus(`Playing: ${getSoundName(state.soundId)}`, "on");
+      setAudioStatus(`Playing: ${getPlaybackLabel(state.soundId, state.layers)}`, "on");
     } else if (!audioEngine.isEnabled) {
       setAudioStatus("Sound is off. Click Enable Sound.", "warning");
     } else if (audioEngine.lastError) {
       setAudioStatus(audioEngine.lastError, "warning");
     }
 
+    syncMoodDisplayFromSelection();
+  });
+
+  dom.layerOptions.addEventListener("change", () => {
+    state.layers = getSelectedLayers();
+    audioEngine.setLayers(state.layers);
     syncMoodDisplayFromSelection();
   });
 
@@ -624,9 +869,9 @@ function setupEvents() {
       }
 
       dom.toggleAudioBtn.textContent = "Mute Sound";
-      const started = await audioEngine.play(state.soundId);
+      const started = await audioEngine.play(state.soundId, state.layers);
       if (started) {
-        setAudioStatus(`Playing: ${getSoundName(state.soundId)}`, "on");
+        setAudioStatus(`Playing: ${getPlaybackLabel(state.soundId, state.layers)}`, "on");
       } else {
         setAudioStatus(audioEngine.lastError || "Audio could not start.", "warning");
       }
@@ -662,11 +907,13 @@ function initializeMood() {
   const initialMood = MOODS[0];
   state.sceneId = initialMood.sceneId;
   state.soundId = initialMood.soundId;
+  state.layers = [...(initialMood.layers ?? [])];
   state.effects = [...initialMood.effects];
   state.moodIndex = 0;
 
   dom.settingSelect.value = state.sceneId;
   dom.soundSelect.value = state.soundId;
+  setCheckedLayers(state.layers);
   setCheckedEffects(state.effects);
 
   dom.sceneLayerA.style.background = sceneById.get(state.sceneId).background;
@@ -705,19 +952,21 @@ function applyMoodByIndex(index) {
 
   state.sceneId = mood.sceneId;
   state.soundId = mood.soundId;
+  state.layers = [...(mood.layers ?? [])];
   state.effects = [...mood.effects];
   state.moodIndex = index;
 
   dom.settingSelect.value = state.sceneId;
   dom.soundSelect.value = state.soundId;
+  setCheckedLayers(state.layers);
   setCheckedEffects(state.effects);
 
   transitionScene(state.sceneId);
   effectsEngine.setEffects(state.effects);
   if (audioEngine.isEnabled) {
-    audioEngine.play(state.soundId).then((started) => {
+    audioEngine.play(state.soundId, state.layers).then((started) => {
       if (started) {
-        setAudioStatus(`Playing: ${getSoundName(state.soundId)}`, "on");
+        setAudioStatus(`Playing: ${getPlaybackLabel(state.soundId, state.layers)}`, "on");
       } else if (audioEngine.lastError) {
         setAudioStatus(audioEngine.lastError, "warning");
       }
@@ -754,7 +1003,8 @@ function syncMoodDisplayFromSelection() {
     (mood) =>
       mood.sceneId === state.sceneId &&
       mood.soundId === state.soundId &&
-      isSameEffectSet(mood.effects, state.effects),
+      isSameIdSet(mood.layers ?? [], state.layers) &&
+      isSameIdSet(mood.effects, state.effects),
   );
 
   if (matchIndex >= 0) {
@@ -770,9 +1020,11 @@ function syncMoodDisplayFromSelection() {
   const effectNames = state.effects
     .map((effectId) => EFFECTS.find((effect) => effect.id === effectId)?.label)
     .filter(Boolean);
+  const layerNames = state.layers.map((layerId) => layerById.get(layerId)?.label).filter(Boolean);
   const actionText = effectNames.length ? effectNames.join(", ") : "No actions";
+  const layerText = layerNames.length ? layerNames.join(", ") : "No layers";
 
-  setMoodMeta("Custom Mood", `${sceneName} with ${soundName}. Actions: ${actionText}.`);
+  setMoodMeta("Custom Mood", `${sceneName} with ${soundName}. Layers: ${layerText}. Actions: ${actionText}.`);
   setActiveMoodButton(-1);
 }
 
@@ -796,12 +1048,25 @@ function setCheckedEffects(effectIds) {
   });
 }
 
+function setCheckedLayers(layerIds) {
+  const selected = new Set(layerIds);
+  const checkboxes = dom.layerOptions.querySelectorAll('input[type="checkbox"]');
+  checkboxes.forEach((checkbox) => {
+    checkbox.checked = selected.has(checkbox.value);
+  });
+}
+
 function getSelectedEffects() {
   const checkboxes = dom.effectsOptions.querySelectorAll('input[type="checkbox"]');
   return [...checkboxes].filter((checkbox) => checkbox.checked).map((checkbox) => checkbox.value);
 }
 
-function isSameEffectSet(a, b) {
+function getSelectedLayers() {
+  const checkboxes = dom.layerOptions.querySelectorAll('input[type="checkbox"]');
+  return [...checkboxes].filter((checkbox) => checkbox.checked).map((checkbox) => checkbox.value);
+}
+
+function isSameIdSet(a, b) {
   if (a.length !== b.length) {
     return false;
   }
@@ -823,6 +1088,20 @@ function setAudioStatus(message, tone = "") {
 
 function getSoundName(soundId) {
   return soundById.get(soundId)?.name ?? "Ambient Track";
+}
+
+function getPlaybackLabel(soundId, layerIds) {
+  const soundName = getSoundName(soundId);
+  if (layerIds.length === 0) {
+    return soundName;
+  }
+
+  const layerWord = layerIds.length === 1 ? "layer" : "layers";
+  return `${soundName} + ${layerIds.length} ${layerWord}`;
+}
+
+function shiftFrequency(frequency, octaveShift) {
+  return frequency * 2 ** octaveShift;
 }
 
 function randomBetween(min, max) {

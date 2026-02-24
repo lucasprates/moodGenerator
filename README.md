@@ -4,7 +4,7 @@ Interactive mood generator web app.
 
 ## Version
 
-Current version: `0.1.0` (kick-off release)
+Current version: `0.2.0` (music layers release)
 
 ## Mood presets (v1)
 
@@ -19,6 +19,7 @@ Current version: `0.1.0` (kick-off release)
 Each preset combines:
 - Setting image style
 - Ambient synthesized music
+- Optional music layers (bass, pads, arpeggios, sparkles)
 - On-screen actions (rain, snow, wind, fireflies)
 
 ## Run
